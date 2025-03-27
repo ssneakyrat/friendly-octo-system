@@ -108,58 +108,13 @@ def _number_to_words(match):
 
 def text_to_phonemes(text, g2p_model="espeak", cache=None):
     """
-    Convert text to phoneme sequence
-    
-    Args:
-        text: Input text
-        g2p_model: Grapheme-to-phoneme model name
-        cache: Path to cache file (optional)
-        
-    Returns:
-        List of phonemes
+    This function is kept for compatibility but now raises an error.
+    The system should only use phonemes directly from .lab files.
     """
-    # Load cache if provided
-    phoneme_cache = {}
-    if cache is not None:
-        cache_path = Path(cache)
-        if cache_path.exists():
-            with open(cache_path, 'r') as f:
-                phoneme_cache = json.load(f)
-            
-            # Check if text is in cache
-            if text in phoneme_cache:
-                return phoneme_cache[text].split()
-    
-    # Clean text
-    cleaned_text = english_cleaners(text)
-    
-    # Apply G2P model
-    if g2p_model == "espeak":
-        try:
-            import phonemizer
-            from phonemizer.backend import EspeakBackend
-            from phonemizer.separator import Separator
-            
-            # Initialize phonemizer
-            backend = EspeakBackend(
-                language='en-us',
-                separator=Separator(phone=' ', syllable=None, word=None)
-            )
-            
-            # Convert text to phonemes
-            phonemes = backend.phonemize([cleaned_text], strip=True)[0].split()
-            
-            # Update cache
-            if cache is not None:
-                phoneme_cache[text] = ' '.join(phonemes)
-                with open(cache_path, 'w') as f:
-                    json.dump(phoneme_cache, f, indent=2)
-            
-            return phonemes
-        except ImportError:
-            raise ImportError("Please install phonemizer: pip install phonemizer")
-    else:
-        raise ValueError(f"Unsupported G2P model: {g2p_model}")
+    raise NotImplementedError(
+        "text_to_phonemes is no longer supported. "
+        "The system should only use phonemes directly from .lab files."
+    )
 
 
 def load_phoneme_dictionary(path):

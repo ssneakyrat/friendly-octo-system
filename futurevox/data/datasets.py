@@ -78,8 +78,6 @@ class FutureVoxDataset(Dataset):
         self.f_max = f_max
         self.f0_min = f0_min
         self.f0_max = f0_max
-        self.g2p_model = g2p_model
-        self.cleaner = cleaner
         self.binary_file = binary_file
         self.use_binary = binary_file is not None
         
@@ -413,36 +411,6 @@ class FutureVoxDataset(Dataset):
         self.num_speakers = len(self.speaker_map)
         self.num_languages = len(self.language_map)
     
-    def text_to_phonemes(self, text):
-        """
-        Convert text to phoneme sequence
-        
-        Args:
-            text: Input text
-            
-        Returns:
-            List of phonemes
-        """
-        # Check if text already has cached phonemes
-        if text in self.phoneme_dict:
-            return self.phoneme_dict[text].split()
-        
-        # Clean text if cleaner is specified
-        if self.cleaner == "english_cleaners":
-            try:
-                from text.cleaners import english_cleaners
-                text = english_cleaners(text)
-            except ImportError:
-                pass
-        
-        # Convert to phonemes
-        phonemes = self.phonemizer.phonemize([text], strip=True)[0].split()
-        
-        # Cache result
-        self.phoneme_dict[text] = " ".join(phonemes)
-        
-        return phonemes
-    
     def phonemes_to_ids(self, phonemes):
         """
         Convert phoneme sequence to IDs
@@ -637,11 +605,12 @@ class FutureVoxDataset(Dataset):
         f0 = f0.squeeze(0).unsqueeze(1)
         
         # Process phonemes
+        # Process phonemes - only from .lab files
         if "phonemes" in entry:
             phonemes = entry["phonemes"].split()
         else:
-            phonemes = self.text_to_phonemes(entry["text"])
-        
+            raise ValueError(f"No phonemes found for entry {idx}. All entries must have phonemes from .lab files.")
+
         phoneme_ids = self.phonemes_to_ids(phonemes)
         
         # Get durations

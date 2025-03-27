@@ -1,2 +1,5 @@
 futurevox/docs/binary_datasets.md
+*.pyc
+*.ipynb
 datasets/
+outputs/

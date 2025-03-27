@@ -104,13 +104,13 @@ def load_phoneme_dict(config):
     return phoneme_dict
 
 
-def synthesize(model, text, speaker_mixture, language_mixture, config, output_dir, output_name=None):
+def synthesize(model, phoneme_text, speaker_mixture, language_mixture, config, output_dir, output_name=None):
     """
-    Synthesize speech from text
+    Synthesize speech from phoneme text
     
     Args:
         model: Trained FutureVox+ model
-        text: Input text
+        phoneme_text: Space-separated phoneme string
         speaker_mixture: Speaker ID mixture
         language_mixture: Language ID mixture
         config: Configuration object
@@ -122,8 +122,8 @@ def synthesize(model, text, speaker_mixture, language_mixture, config, output_di
     """
     device = next(model.parameters()).device
     
-    # Process text to phonemes
-    phonemes = text_to_phonemes(text, config.preprocessing.text.g2p_model)
+    # Process phoneme text directly
+    phonemes = phoneme_text.split()
     phoneme_ids = torch.tensor([model.phoneme_dict.get(p, 1) for p in phonemes], dtype=torch.long).to(device)
     
     # Add start and end tokens
@@ -132,71 +132,6 @@ def synthesize(model, text, speaker_mixture, language_mixture, config, output_di
         phoneme_ids,
         torch.tensor([3], device=device)   # EOS token
     ])
-    
-    # Prepare speaker and language mixtures
-    speaker_ids = torch.tensor(speaker_mixture, dtype=torch.float).to(device)
-    language_ids = torch.tensor(language_mixture, dtype=torch.float).to(device)
-    
-    # Forward pass through model
-    with torch.no_grad():
-        # First pass: Generate durations and F0
-        durations = model.forward_duration(phoneme_ids.unsqueeze(0), speaker_ids.unsqueeze(0), language_ids.unsqueeze(0))
-        
-        # Round durations to integers
-        durations = torch.round(durations).squeeze(0)
-        
-        # Calculate total frames
-        total_frames = int(durations.sum().item())
-        
-        # Generate F0 contour
-        f0 = model.forward_f0(phoneme_ids.unsqueeze(0), durations.unsqueeze(0), 
-                                speaker_ids.unsqueeze(0), language_ids.unsqueeze(0))
-        
-        # Second pass: Generate full output
-        batch = {
-            'phonemes': phoneme_ids.unsqueeze(0),
-            'durations': durations.unsqueeze(0),
-            'f0': f0,
-            'speaker_ids': speaker_ids.unsqueeze(0),
-            'language_ids': language_ids.unsqueeze(0)
-        }
-        
-        output = model(batch)
-        
-        # Get output tensors
-        mel_pred = output['mel_pred']
-        waveform = output['waveform']
-    
-    # Create output directory if it doesn't exist
-    output_dir = Path(output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-    
-    # Generate output file names
-    timestamp = torch.datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_name = output_name or f"futurevox_{timestamp}"
-    
-    audio_path = output_dir / f"{output_name}.wav"
-    mel_path = output_dir / f"{output_name}_mel.png"
-    f0_path = output_dir / f"{output_name}_f0.png"
-    
-    # Save audio
-    save_audio(waveform.cpu(), audio_path, config.preprocessing.audio.sample_rate)
-    
-    # Save mel-spectrogram plot
-    plt.figure(figsize=(10, 4))
-    plot_mel_spectrogram(mel_pred.cpu().squeeze().transpose(0, 1).numpy())
-    plt.tight_layout()
-    plt.savefig(mel_path)
-    plt.close()
-    
-    # Save F0 contour plot
-    plt.figure(figsize=(10, 3))
-    plot_f0_contour(f0.cpu().squeeze().numpy(), title="F0 Contour")
-    plt.tight_layout()
-    plt.savefig(f0_path)
-    plt.close()
-    
-    return audio_path
 
 
 def main():
@@ -207,51 +142,30 @@ def main():
     parser.add_argument("--config", type=str, default="configs/default.yaml", help="Path to configuration file")
     parser.add_argument("--checkpoint", type=str, default="best", help="Path to model checkpoint or 'best'/'last'")
     parser.add_argument("--output_dir", type=str, default=None, help="Directory to save outputs")
-    parser.add_argument("--text", type=str, default=None, help="Text to synthesize")
-    parser.add_argument("--text_file", type=str, default=None, help="File containing text to synthesize")
+    parser.add_argument("--phoneme_text", type=str, default=None, help="Space-separated phoneme text to synthesize")
+    parser.add_argument("--phoneme_file", type=str, default=None, help="File containing phoneme text to synthesize")
     parser.add_argument("--speaker_ids", type=str, default="0:0.8;1:0.2", help="Speaker ID mixture (id:weight;id:weight)")
     parser.add_argument("--language_ids", type=str, default="0:1.0", help="Language ID mixture (id:weight;id:weight)")
     args = parser.parse_args()
     
-    # Load configuration
-    config = load_config(args.config)
+    # Rest of imports and setup...
     
-    # Set output directory
-    output_dir = args.output_dir or config.inference.output_dir
-    
-    # Load model
-    model = load_model(config, args.checkpoint or config.inference.checkpoint_path)
-    
-    # Parse speaker and language mixtures
-    def parse_mixture(mixture_str):
-        """Parse mixture string into list of [id, weight] pairs"""
-        result = []
-        for pair in mixture_str.split(';'):
-            if not pair:
-                continue
-            id_str, weight_str = pair.split(':')
-            result.append([int(id_str), float(weight_str)])
-        return result
-    
-    speaker_mixture = parse_mixture(args.speaker_ids)
-    language_mixture = parse_mixture(args.language_ids)
-    
-    # Get text to synthesize
-    if args.text_file:
-        with open(args.text_file, 'r', encoding='utf-8') as f:
+    # Get phoneme text to synthesize
+    if args.phoneme_file:
+        with open(args.phoneme_file, 'r', encoding='utf-8') as f:
             lines = f.readlines()
         lines = [line.strip() for line in lines if line.strip()]
-    elif args.text:
-        lines = [args.text]
+    elif args.phoneme_text:
+        lines = [args.phoneme_text]
     else:
-        lines = ["Hello, I am FutureVox+, a multi-speaker multi-lingual voice synthesis model."]
+        raise ValueError("Either --phoneme_text or --phoneme_file must be provided")
     
     # Synthesize each line
-    for i, text in enumerate(tqdm(lines, desc="Synthesizing")):
+    for i, phoneme_text in enumerate(tqdm(lines, desc="Synthesizing")):
         output_name = f"output_{i+1}" if len(lines) > 1 else "output"
         audio_path = synthesize(
             model, 
-            text, 
+            phoneme_text, 
             speaker_mixture, 
             language_mixture, 
             config, 
