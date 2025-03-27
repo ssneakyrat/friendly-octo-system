@@ -1,0 +1,133 @@
+# FutureVox+ Default Configuration
+
+# Paths
+data_dir: "data/processed"
+output_dir: "outputs"
+checkpoint_dir: "${output_dir}/checkpoints"
+log_dir: "${output_dir}/logs"
+
+# Model architecture config
+model:
+  name: "FutureVox+"
+  
+  # Speaker mixture module (3.2M parameters)
+  speaker_mixture:
+    embedding_dim: 512
+    num_speakers: 1000
+    hidden_dims: [512, 256, 128]
+    attribute_net_dims: [256, 128, 64]
+  
+  # Language mixture module (2.1M parameters)
+  language_mixture:
+    embedding_dim: 256
+    num_languages: 50
+    num_phonemes: 100
+    hidden_dims: [512, 256, 128]
+    accent_strength_dims: [256, 128, 64]
+  
+  # F0 processing module (1.75M parameters)
+  f0_processor:
+    input_dim: 256
+    hidden_dims: [256, 128, 64]
+    num_registers: 3
+    decomp_dims: [512, 256]
+  
+  # Acoustic feature generation (8.9M parameters)
+  acoustic_generator:
+    model_dim: 384
+    num_layers: 4
+    num_heads: 4
+    ffn_dim: 1536
+    dropout: 0.1
+    cross_attention_layers: 2
+  
+  # Neural vocoder (24.5M parameters)
+  vocoder:
+    input_dim: 80  # Mel-spectrogram bins
+    hidden_dims: [512, 1024, 2048]
+    upsample_rates: [8, 8, 2, 2]
+    upsample_kernel_sizes: [16, 16, 4, 4]
+    resblock_kernel_sizes: [3, 7, 11]
+    resblock_dilation_sizes: [[1,3,5], [1,3,5], [1,3,5]]
+    gan_feat_matching_dim: 16
+    multi_period_discriminator_periods: [2, 3, 5, 7, 11]
+
+# Training config
+training:
+  batch_size: 16
+  num_workers: 4
+  learning_rate: 0.0002
+  weight_decay: 0.0001
+  scheduler: "OneCycleLR"  # Options: "OneCycleLR", "ExponentialLR", "CosineAnnealingLR"
+  scheduler_params:
+    pct_start: 0.1  # For OneCycleLR
+    gamma: 0.99     # For ExponentialLR
+    T_max: 1000     # For CosineAnnealingLR
+  grad_clip_val: 1.0
+  max_epochs: 1000
+  precision: 16  # Mixed precision training
+  accumulate_grad_batches: 1
+  
+  # Loss weights
+  loss_weights:
+    mel_loss: 45.0
+    feature_loss: 2.0
+    adversarial_loss: 1.0
+    f0_loss: 10.0
+    duration_loss: 1.0
+  
+# Validation config
+validation:
+  batch_size: 16
+  num_workers: 4
+  val_check_interval: 5000  # Steps between validation
+  num_audio_samples: 4  # Number of audio samples to log
+  
+# Data preprocessing config
+preprocessing:
+  audio:
+    sample_rate: 22050
+    n_fft: 1024
+    hop_length: 256
+    win_length: 1024
+    n_mels: 80
+    f_min: 0
+    f_max: 8000
+    
+  text:
+    g2p_model: "espeak"
+    phoneme_dict: "data/phoneme_dict.json"
+    cleaner: "english_cleaners"
+
+  f0:
+    min_f0: 65
+    max_f0: 1000
+    hop_length: 256
+    voice_ranges:  # Hz ranges for different voice types
+      bass: [65, 300]
+      baritone: [80, 350]
+      tenor: [130, 500]
+      alto: [160, 700]
+      soprano: [200, 1100]
+
+# Logger settings
+logger:
+  tensorboard:
+    flush_secs: 120
+    update_freq: "epoch"
+    log_graph: true
+    max_queue: 10
+  
+  # Audio logging settings
+  audio:
+    log_every_n_steps: 1000
+    sample_rate: 22050
+    n_samples_per_batch: 2
+
+# Inference settings
+inference:
+  batch_size: 1
+  checkpoint_path: "best"  # "best", "last", or specific path
+  output_dir: "outputs/generated"
+  temperature: 1.0  # Sampling temperature
+  output_format: "wav"  # Options: "wav", "mp3", "flac"
