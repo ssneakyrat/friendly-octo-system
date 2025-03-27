@@ -10,6 +10,16 @@ import torch
 import numpy as np
 from tqdm import tqdm
 import shutil
+import yaml
+from omegaconf import OmegaConf
+
+try:
+    from preprocessing.binary import save_dataset_to_binary, validate_binary_file, create_binary_splits
+    BINARY_SUPPORT = True
+except ImportError:
+    BINARY_SUPPORT = False
+    print("Warning: Binary file support not available, install h5py for binary file support")
+
 
 def parse_lab_file(lab_file_path, hop_length=256, sample_rate=22050, time_unit="samples"):
     """
@@ -51,6 +61,7 @@ def parse_lab_file(lab_file_path, hop_length=256, sample_rate=22050, time_unit="
     
     return frame_indices, phonemes
 
+
 def create_alignment_file(frame_indices, output_path):
     """
     Create alignment file in the format expected by FutureVoxDataset
@@ -63,7 +74,8 @@ def create_alignment_file(frame_indices, output_path):
     with open(output_path, 'w') as f:
         json.dump(frame_indices, f)
 
-def process_dataset(data_dir, output_dir, hop_length=256, sample_rate=22050, time_unit="samples"):
+
+def process_dataset(data_dir, output_dir, hop_length=256, sample_rate=22050, time_unit="samples", create_binary=False):
     """
     Process dataset: find .lab and .wav files, create alignments and metadata
     
@@ -73,6 +85,7 @@ def process_dataset(data_dir, output_dir, hop_length=256, sample_rate=22050, tim
         hop_length: Hop length for spectrogram
         sample_rate: Audio sample rate
         time_unit: Unit of time in .lab file ('samples', 'seconds', '100ns')
+        create_binary: Whether to create binary dataset files
         
     Returns:
         Path to generated metadata file
@@ -135,7 +148,36 @@ def process_dataset(data_dir, output_dir, hop_length=256, sample_rate=22050, tim
         json.dump(metadata, f, indent=2)
     
     print(f"Processed {len(metadata)} files. Metadata saved to {metadata_file}")
+    
+    # Create binary files if requested and supported
+    if create_binary and BINARY_SUPPORT:
+        binary_dir = processed_dir / "binary"
+        binary_dir.mkdir(exist_ok=True)
+        
+        print(f"Creating binary files in {binary_dir}")
+        binary_files = create_binary_splits(
+            metadata_file, 
+            binary_dir,
+            train_dir
+        )
+        
+        # Validate binary files
+        for split_name, binary_path in binary_files.items():
+            print(f"Validating {split_name} binary file: {binary_path}")
+            validation_result = validate_binary_file(binary_path, 
+                                                   metadata_file if split_name == 'train' else None)
+            
+            if validation_result['valid']:
+                print(f"✅ {split_name.capitalize()} binary file validation successful!")
+                for key, value in validation_result.get('stats', {}).items():
+                    print(f"  • {key}: {value}")
+            else:
+                print(f"❌ {split_name.capitalize()} binary file validation failed!")
+                for error in validation_result.get('errors', []):
+                    print(f"  • {error}")
+    
     return metadata_file
+
 
 def process_files(lab_files, speaker_id, language_id, speaker_output_dir, train_dir, 
                  hop_length, sample_rate, time_unit, metadata):
@@ -208,14 +250,7 @@ def process_files(lab_files, speaker_id, language_id, speaker_output_dir, train_
             "language": language_id
         }
         metadata.append(entry)
-    
-    # Save metadata file
-    metadata_file = train_dir / "metadata.json"
-    with open(metadata_file, 'w') as f:
-        json.dump(metadata, f, indent=2)
-    
-    print(f"Processed {len(metadata)} files. Metadata saved to {metadata_file}")
-    return metadata_file
+
 
 def build_phoneme_vocabulary(metadata_file):
     """
@@ -258,6 +293,7 @@ def build_phoneme_vocabulary(metadata_file):
     print(f"Found {len(phoneme_set)} unique phonemes")
     print(f"Phoneme vocabulary saved to {vocab_file}")
     return vocab
+
 
 def create_val_test_split(metadata_file, val_ratio=0.1, test_ratio=0.1, random_seed=42):
     """
@@ -325,10 +361,32 @@ def create_val_test_split(metadata_file, val_ratio=0.1, test_ratio=0.1, random_s
     
     print(f"Data split: {len(train_data)} train, {len(val_data)} validation, {len(test_data)} test")
 
+
+def load_config(config_path):
+    """
+    Load configuration from YAML file
+    
+    Args:
+        config_path: Path to configuration file
+        
+    Returns:
+        Configuration object
+    """
+    with open(config_path, 'r') as f:
+        config = yaml.safe_load(f)
+    
+    # Convert to OmegaConf for easier access
+    config = OmegaConf.create(config)
+    
+    return config
+
+
 def main():
     parser = argparse.ArgumentParser(description="Process dataset for FutureVox training")
-    parser.add_argument("--data_dir", type=str, required=True, help="Directory containing speaker folders")
-    parser.add_argument("--output_dir", type=str, required=True, help="Directory to save processed data")
+    parser.add_argument("--config", type=str, default="configs/default.yaml", 
+                        help="Path to configuration file (will use paths defined there)")
+    parser.add_argument("--data_dir", type=str, help="Directory containing speaker folders (overrides config)")
+    parser.add_argument("--output_dir", type=str, help="Directory to save processed data (overrides config)")
     parser.add_argument("--hop_length", type=int, default=256, help="Hop length for spectrogram")
     parser.add_argument("--sample_rate", type=int, default=22050, help="Audio sample rate")
     parser.add_argument("--time_unit", type=str, default="samples", 
@@ -337,16 +395,30 @@ def main():
     parser.add_argument("--val_ratio", type=float, default=0.1, help="Validation set ratio")
     parser.add_argument("--test_ratio", type=float, default=0.1, help="Test set ratio")
     parser.add_argument("--random_seed", type=int, default=42, help="Random seed for data splitting")
+    parser.add_argument("--create_binary", action="store_true", help="Create binary dataset files")
     
     args = parser.parse_args()
     
+    # Load configuration if provided
+    config = None
+    if args.config:
+        config = load_config(args.config)
+    
+    # Get settings from config or arguments
+    data_dir = args.data_dir or (config.data_dir if config else "data/raw")
+    output_dir = args.output_dir or (config.output_dir if config else "outputs")
+    sample_rate = args.sample_rate or (config.preprocessing.audio.sample_rate if config else 22050)
+    hop_length = args.hop_length or (config.preprocessing.audio.hop_length if config else 256)
+    create_binary = args.create_binary or (config.binary.enabled if hasattr(config, 'binary') and hasattr(config.binary, 'enabled') else False)
+    
     # Process dataset
     metadata_file = process_dataset(
-        args.data_dir, 
-        args.output_dir, 
-        args.hop_length, 
-        args.sample_rate,
-        args.time_unit
+        data_dir, 
+        output_dir, 
+        hop_length, 
+        sample_rate,
+        args.time_unit,
+        create_binary
     )
     
     # Build phoneme vocabulary
@@ -356,6 +428,7 @@ def main():
     create_val_test_split(metadata_file, args.val_ratio, args.test_ratio, args.random_seed)
     
     print("Dataset preparation completed!")
+
 
 if __name__ == "__main__":
     main()
