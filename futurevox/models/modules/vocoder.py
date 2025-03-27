@@ -82,8 +82,14 @@ class Generator(nn.Module):
         self.resblocks = nn.ModuleList()
         for i in range(len(self.ups)):
             ch = hidden_dims[min(i + 1, len(hidden_dims) - 1)]
-            for k, d in zip(resblock_kernel_sizes, resblock_dilation_sizes):
-                self.resblocks.append(ResBlock(ch, k, d))
+            for k, d_list in zip(resblock_kernel_sizes, resblock_dilation_sizes):
+                # If d_list is a list or ListConfig, create a ResBlock for each dilation
+                if isinstance(d_list, (list, tuple)) or hasattr(d_list, '__iter__') and not isinstance(d_list, (str, bytes)):
+                    for d in d_list:
+                        self.resblocks.append(ResBlock(ch, k, d))
+                else:
+                    # If d_list is a scalar, create a single ResBlock
+                    self.resblocks.append(ResBlock(ch, k, d_list))
         
         # Harmonic generator
         self.harmonic_gen = nn.Sequential(

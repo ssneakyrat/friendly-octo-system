@@ -10,33 +10,11 @@ binary_dir: "${data_dir}/binary"    # Directory for binary dataset files
 # Binary file settings
 binary:
   enabled: true                    # Whether to use binary files instead of raw files
-  train_file: "${binary_dir}/train.h5"
-  val_file: "${binary_dir}/val.h5"
-  test_file: "${binary_dir}/test.h5"
+  train_file: "outputs/processed/binary/train.h5"
+  val_file: "outputs/processed/binary/val.h5"
+  test_file: "outputs/processed/binary/test.h5"
   validate_on_load: true           # Validate binary files during loading
   create_if_missing: true          # Create binary files if not found
-
-# Model architecture config
-model:
-  name: "FutureVox+"
-  
-  # FutureVox+ Single Speaker Test Configuration
-
-# Paths
-data_dir: "datasets/single_speaker_test"
-output_dir: "outputs/single_speaker_test"
-checkpoint_dir: "${output_dir}/checkpoints"
-log_dir: "${output_dir}/logs"
-binary_dir: "${data_dir}/binary"
-
-# Binary file settings
-binary:
-  enabled: true
-  train_file: "${binary_dir}/train.h5"
-  val_file: "${binary_dir}/val.h5"
-  test_file: "${binary_dir}/test.h5"
-  validate_on_load: true
-  create_if_missing: true
 
 # Model architecture config (reduced for single speaker)
 model:

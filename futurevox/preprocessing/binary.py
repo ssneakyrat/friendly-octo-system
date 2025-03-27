@@ -79,7 +79,9 @@ def save_dataset_to_binary(metadata, output_path, data_dir=None, sample_rate=220
             # Store phonemes
             if 'phonemes' in item:
                 phoneme_list = item['phonemes'].split()
-                phoneme_group.create_dataset(item_id, data=np.array(phoneme_list), dtype=dt)
+                # Store as a single string instead of an array
+                phoneme_str = ' '.join(phoneme_list)
+                phoneme_group.create_dataset(item_id, data=phoneme_str, dtype=dt)
             
             # Store speaker and language
             speaker_id = item.get('speaker_id', 'unknown')
@@ -266,8 +268,11 @@ def load_item_from_binary(binary_path, item_idx):
         
         # Load phonemes
         if 'phonemes' in f and item_id in f['phonemes']:
-            phonemes = f['phonemes'][item_id][()]
-            item_data['phonemes'] = ' '.join(phonemes)
+            phoneme_str = f['phonemes'][item_id][()]
+            # If it's a byte string, decode it
+            if isinstance(phoneme_str, bytes):
+                phoneme_str = phoneme_str.decode('utf-8')
+            item_data['phonemes'] = phoneme_str
         
         # Load speaker and language
         if 'speaker_ids' in f and item_id in f['speaker_ids']:

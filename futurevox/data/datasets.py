@@ -10,6 +10,12 @@ import random
 
 from utils.audio import compute_mel_spectrogram, extract_f0, load_audio
 
+# Import h5py for binary file support
+try:
+    import h5py
+except ImportError:
+    h5py = None
+
 # Import the binary utilities
 try:
     from preprocessing.binary import load_item_from_binary
@@ -101,6 +107,10 @@ class FutureVoxDataset(Dataset):
         """
         if not Path(self.binary_file).exists():
             raise FileNotFoundError(f"Binary file not found at {self.binary_file}")
+    
+        if h5py is None:
+            raise ImportError("h5py module not available, please install it with pip install h5py")
+    
         
         try:
             with h5py.File(self.binary_file, 'r') as f:
@@ -148,21 +158,6 @@ class FutureVoxDataset(Dataset):
         """
         Build phoneme vocabulary from metadata
         """
-        # Import G2P model
-        if self.g2p_model == "espeak":
-            try:
-                import phonemizer
-                from phonemizer.backend import EspeakBackend
-                from phonemizer.separator import Separator
-                
-                self.phonemizer = phonemizer.backend.EspeakBackend(
-                    language='en-us',
-                    separator=Separator(phone=' ', syllable=None, word=None)
-                )
-            except ImportError:
-                raise ImportError("Please install phonemizer: pip install phonemizer")
-        else:
-            raise ValueError(f"Unsupported G2P model: {self.g2p_model}")
         
         # Create phoneme set from all transcripts
         phoneme_set = set()
@@ -171,213 +166,7 @@ class FutureVoxDataset(Dataset):
                 phonemes = entry["phonemes"].split()
                 phoneme_set.update(phonemes)
             elif "text" in entry:
-                phonemes = self.phonemizer.phonemize([entry["text"]], strip=True)[0].split()
-                phoneme_set.update(phonemes)
-        
-        # Create phoneme-to-id mapping
-        self.phoneme_dict = {
-            "<pad>": 0,
-            "<unk>": 1,
-            "<bos>": 2,
-            "<eos>": 3
-        }
-        
-        for i, phoneme in enumerate(sorted(phoneme_set)):
-            self.phoneme_dict[phoneme] = i + 4
-    
-    def build_speaker_language_maps(self):
-        """
-        Build speaker and language ID maps
-        """
-        # Extract unique speakers and languages
-        speakers = set()
-        languages = set()
-        
-        for entry in self.metadata:
-            if "speaker_id" in entry:
-                speakers.add(entry["speaker_id"])
-            if "language" in entry:
-                languages.add(entry["language"])
-        
-        # Create ID mappings
-        self.speaker_map = {speaker: i for i, speaker in enumerate(sorted(speakers))}
-        self.language_map = {lang: i for i, lang in enumerate(sorted(languages))}
-        
-        self.num_speakers = len(self.speaker_map)
-        self.num_languages = len(self.language_map)
-    
-    def __len__(self):
-        """
-        Get dataset length
-        
-        Returns:
-            Number of items in dataset
-        """
-        return len(self.metadata)
-    
-    def __getitem__(self, idx):
-        """
-        Get dataset item
-        
-        Args:
-            idx: Item index
-            
-        Returns:
-            Dictionary containing:
-                - phonemes: Phoneme ID sequence
-                - durations: Phoneme durations
-                - f0: F0 contour
-                - mel_spectrogram: Mel-spectrogram
-                - speaker_ids: Speaker ID mixture
-                - language_ids: Language ID mixture
-        """
-        if self.use_binary:
-            # Load from binary file
-            entry = load_item_from_binary(self.binary_file, idx)
-        else:
-            # Load from metadata
-            entry = self.metadata[idx]
-        
-        # Process waveform - either load from file or use pre-loaded from binary
-        if 'audio_waveform' in entry:
-            # Waveform already loaded from binary
-            waveform = entry['audio_waveform']
-            if isinstance(waveform, np.ndarray):
-                waveform = torch.from_numpy(waveform)
-        else:
-            # Load audio from file
-            audio_path = self.data_dir / entry["audio_file"]
-            waveform = load_audio(audio_path, self.sample_rate)
-        
-        # Compute mel-spectrogram
-        mel_spectrogram = compute_mel_spectrogram(
-            waveform,
-            sample_rate=self.sample_rate,
-            n_fft=self.n_fft,
-            hop_length=self.hop_length,
-            win_length=self.win_length,
-            n_mels=self.n_mels,
-            f_min=self.f_min,
-            f_max=self.f_max
-        )
-        
-        # Transpose mel-spectrogram for easier handling (time, n_mels)
-        mel_spectrogram = mel_spectrogram.squeeze(0).transpose(0, 1)
-        
-        # Extract F0
-        f0 = extract_f0(
-            waveform,
-            sample_rate=self.sample_rate,
-            hop_length=self.hop_length,
-            f0_min=self.f0_min,
-            f0_max=self.f0_max
-        )
-        
-        # Reshape F0 to match mel-spectrogram length
-        if f0.size(1) < mel_spectrogram.size(0):
-            f0 = F.pad(f0, (0, 0, 0, mel_spectrogram.size(0) - f0.size(1)))
-        elif f0.size(1) > mel_spectrogram.size(0):
-            f0 = f0[:, :mel_spectrogram.size(0)]
-        
-        # Reshape to (time, 1)
-        f0 = f0.squeeze(0).unsqueeze(1)
-        
-        # Process phonemes
-        if "phonemes" in entry:
-            phonemes = entry["phonemes"].split()
-        else:
-            phonemes = self.text_to_phonemes(entry["text"])
-        
-        phoneme_ids = self.phonemes_to_ids(phonemes)
-        
-        # Get durations
-        if 'durations' in entry and isinstance(entry['durations'], torch.Tensor):
-            # Durations already loaded from binary
-            durations = entry['durations']
-        elif "alignment_file" in entry:
-            alignment_path = self.data_dir / entry["alignment_file"] if not self.use_binary else entry["alignment_file"]
-            if os.path.exists(alignment_path):
-                durations = self.get_duration_from_alignment(alignment_path)
-            else:
-                # If alignment not available, create uniform durations
-                total_frames = mel_spectrogram.size(0)
-                durations = torch.ones(len(phoneme_ids), dtype=torch.float) * (total_frames / len(phoneme_ids))
-                # Adjust last duration to match exactly
-                durations[-1] = total_frames - durations[:-1].sum()
-        else:
-            # Create uniform durations
-            total_frames = mel_spectrogram.size(0)
-            durations = torch.ones(len(phoneme_ids), dtype=torch.float) * (total_frames / len(phoneme_ids))
-            # Adjust last duration to match exactly
-            durations[-1] = total_frames - durations[:-1].sum()
-        
-        # Create speaker and language mixtures
-        speaker_id = entry.get("speaker_id", "unknown")
-        language = entry.get("language", "en")
-        
-        speaker_mixture = self.create_speaker_mixture(speaker_id)
-        language_mixture = self.create_language_mixture(language)
-        
-        # Return item
-        return {
-            "phonemes": phoneme_ids,
-            "durations": durations,
-            "f0": f0,
-            "mel_spectrogram": mel_spectrogram,
-            "speaker_ids": speaker_mixture,
-            "language_ids": language_mixture
-        }
-
-    # Other methods remain the same...
-    
-    def load_metadata(self):
-        """
-        Load metadata from JSON file
-        """
-        if not self.metadata_path.exists():
-            raise FileNotFoundError(f"Metadata file not found at {self.metadata_path}")
-        
-        with open(self.metadata_path, 'r') as f:
-            self.metadata = json.load(f)
-        
-        # Filter out entries with missing files
-        valid_entries = []
-        for entry in self.metadata:
-            audio_path = self.data_dir / entry["audio_file"]
-            if audio_path.exists():
-                valid_entries.append(entry)
-        
-        self.metadata = valid_entries
-    
-    def build_phoneme_vocabulary(self):
-        """
-        Build phoneme vocabulary from metadata
-        """
-        # Import G2P model
-        if self.g2p_model == "espeak":
-            try:
-                import phonemizer
-                from phonemizer.backend import EspeakBackend
-                from phonemizer.separator import Separator
-                
-                self.phonemizer = phonemizer.backend.EspeakBackend(
-                    language='en-us',
-                    separator=Separator(phone=' ', syllable=None, word=None)
-                )
-            except ImportError:
-                raise ImportError("Please install phonemizer: pip install phonemizer")
-        else:
-            raise ValueError(f"Unsupported G2P model: {self.g2p_model}")
-        
-        # Create phoneme set from all transcripts
-        phoneme_set = set()
-        for entry in self.metadata:
-            if "phonemes" in entry:
-                phonemes = entry["phonemes"].split()
-                phoneme_set.update(phonemes)
-            elif "text" in entry:
-                phonemes = self.phonemizer.phonemize([entry["text"]], strip=True)[0].split()
-                phoneme_set.update(phonemes)
+                raise RuntimeError(f"Failed to process non phonemes text")
         
         # Create phoneme-to-id mapping
         self.phoneme_dict = {
@@ -565,11 +354,23 @@ class FutureVoxDataset(Dataset):
                 - speaker_ids: Speaker ID mixture
                 - language_ids: Language ID mixture
         """
-        entry = self.metadata[idx]
+        if self.use_binary:
+            # Load from binary file
+            entry = load_item_from_binary(self.binary_file, idx)
+        else:
+            # Load from metadata
+            entry = self.metadata[idx]
         
-        # Load audio
-        audio_path = self.data_dir / entry["audio_file"]
-        waveform = load_audio(audio_path, self.sample_rate)
+        # Process waveform - either load from file or use pre-loaded from binary
+        if 'audio_waveform' in entry:
+            # Waveform already loaded from binary
+            waveform = entry['audio_waveform']
+            if isinstance(waveform, np.ndarray):
+                waveform = torch.from_numpy(waveform)
+        else:
+            # Load audio from file
+            audio_path = self.data_dir / entry["audio_file"]
+            waveform = load_audio(audio_path, self.sample_rate)
         
         # Compute mel-spectrogram
         mel_spectrogram = compute_mel_spectrogram(
@@ -605,19 +406,29 @@ class FutureVoxDataset(Dataset):
         f0 = f0.squeeze(0).unsqueeze(1)
         
         # Process phonemes
-        # Process phonemes - only from .lab files
         if "phonemes" in entry:
             phonemes = entry["phonemes"].split()
         else:
-            raise ValueError(f"No phonemes found for entry {idx}. All entries must have phonemes from .lab files.")
-
+            phonemes = self.text_to_phonemes(entry["text"])
+        
         phoneme_ids = self.phonemes_to_ids(phonemes)
         
         # Get durations
-        if "alignment_file" in entry and os.path.exists(self.data_dir / entry["alignment_file"]):
-            durations = self.get_duration_from_alignment(self.data_dir / entry["alignment_file"])
+        if 'durations' in entry and isinstance(entry['durations'], torch.Tensor):
+            # Durations already loaded from binary
+            durations = entry['durations']
+        elif "alignment_file" in entry:
+            alignment_path = self.data_dir / entry["alignment_file"] if not self.use_binary else entry["alignment_file"]
+            if os.path.exists(alignment_path):
+                durations = self.get_duration_from_alignment(alignment_path)
+            else:
+                # If alignment not available, create uniform durations
+                total_frames = mel_spectrogram.size(0)
+                durations = torch.ones(len(phoneme_ids), dtype=torch.float) * (total_frames / len(phoneme_ids))
+                # Adjust last duration to match exactly
+                durations[-1] = total_frames - durations[:-1].sum()
         else:
-            # If alignment not available, create uniform durations
+            # Create uniform durations
             total_frames = mel_spectrogram.size(0)
             durations = torch.ones(len(phoneme_ids), dtype=torch.float) * (total_frames / len(phoneme_ids))
             # Adjust last duration to match exactly
@@ -632,10 +443,24 @@ class FutureVoxDataset(Dataset):
         
         # Return item
         return {
-            "phonemes": phoneme_ids,
-            "durations": durations,
-            "f0": f0,
-            "mel_spectrogram": mel_spectrogram,
-            "speaker_ids": speaker_mixture,
-            "language_ids": language_mixture
+            "phonemes": phoneme_ids.detach(),
+            "durations": durations.detach(),
+            "f0": f0.detach(),
+            "mel_spectrogram": mel_spectrogram.detach(),
+            "speaker_ids": speaker_mixture.detach(),
+            "language_ids": language_mixture.detach()
         }
+
+    def text_to_phonemes(self, text):
+        """
+        Convert text to phonemes
+        
+        Args:
+            text: Input text
+            
+        Returns:
+            List of phonemes
+        """
+        # Use phonemizer for conversion
+        phonemes = self.phonemizer.phonemize([text], strip=True)[0].split()
+        return phonemes
