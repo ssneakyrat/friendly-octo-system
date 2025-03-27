@@ -443,12 +443,12 @@ class FutureVoxDataset(Dataset):
         
         # Return item
         return {
-            "phonemes": phoneme_ids.detach(),
-            "durations": durations.detach(),
-            "f0": f0.detach(),
-            "mel_spectrogram": mel_spectrogram.detach(),
-            "speaker_ids": speaker_mixture.detach(),
-            "language_ids": language_mixture.detach()
+            "phonemes": phoneme_ids.detach().clone(),
+            "durations": durations.detach().clone(),
+            "f0": f0.detach().clone(),
+            "mel_spectrogram": mel_spectrogram.detach().clone(),
+            "speaker_ids": speaker_mixture.detach().clone(),
+            "language_ids": language_mixture.detach().clone()
         }
 
     def text_to_phonemes(self, text):

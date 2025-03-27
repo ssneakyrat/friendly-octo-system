@@ -228,7 +228,7 @@ class FutureVoxDataModule(pl.LightningDataModule):
             self.train_dataset,
             batch_size=self.batch_size,
             shuffle=True,
-            num_workers=self.num_workers,
+            num_workers=0, #self.num_workers,
             pin_memory=True,
             drop_last=True,
             collate_fn=self._collate_fn
@@ -245,7 +245,7 @@ class FutureVoxDataModule(pl.LightningDataModule):
             self.val_dataset,
             batch_size=self.val_batch_size,
             shuffle=False,
-            num_workers=self.val_num_workers,
+            num_workers=0, #self.val_num_workers,
             pin_memory=True,
             collate_fn=self._collate_fn
         )
@@ -315,14 +315,14 @@ class FutureVoxDataModule(pl.LightningDataModule):
         speaker_ids = torch.stack(speaker_ids)
         language_ids = torch.stack(language_ids)
         
-        # Create batch dictionary
+        # Ensure all tensors are detached at the end
         batch_dict = {
-            'phonemes': phoneme_padded,
-            'durations': duration_padded,
-            'f0': f0_padded,
-            'mel_spectrogram': mel_padded,
-            'speaker_ids': speaker_ids,
-            'language_ids': language_ids
+            'phonemes': phoneme_padded.detach(),
+            'durations': duration_padded.detach(),
+            'f0': f0_padded.detach(),
+            'mel_spectrogram': mel_padded.detach(),
+            'speaker_ids': speaker_ids.detach(),
+            'language_ids': language_ids.detach()
         }
         
         return batch_dict
