@@ -3,6 +3,8 @@ import torchaudio
 import torchaudio.functional as F
 import torchaudio.transforms as T
 import numpy as np
+import matplotlib
+matplotlib.use('Agg')  # Use non-interactive backend that doesn't require Qt
 import matplotlib.pyplot as plt
 from librosa.filters import mel as librosa_mel_fn
 

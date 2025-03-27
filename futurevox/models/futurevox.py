@@ -2,6 +2,8 @@ import torch
 import torch.nn as nn
 import pytorch_lightning as pl
 import torchaudio
+import matplotlib
+matplotlib.use('Agg')  # Use non-interactive backend that doesn't require Qt
 import matplotlib.pyplot as plt
 import io
 from pathlib import Path

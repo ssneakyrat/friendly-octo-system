@@ -1,6 +1,8 @@
 import io
 import torch
 import numpy as np
+import matplotlib
+matplotlib.use('Agg')  # Use non-interactive backend that doesn't require Qt
 import matplotlib.pyplot as plt
 from matplotlib.colors import LinearSegmentedColormap
 import librosa

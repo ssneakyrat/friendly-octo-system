@@ -7,6 +7,8 @@ import yaml
 import torch
 import torchaudio
 import numpy as np
+import matplotlib
+matplotlib.use('Agg')  # Use non-interactive backend that doesn't require Qt
 import matplotlib.pyplot as plt
 from pathlib import Path
 from omegaconf import OmegaConf

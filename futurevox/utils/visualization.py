@@ -1,3 +1,5 @@
+import matplotlib
+matplotlib.use('Agg')  # Use non-interactive backend that doesn't require Qt
 import numpy as np
 import matplotlib.pyplot as plt
 import torch
